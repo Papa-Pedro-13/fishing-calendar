@@ -1,18 +1,16 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { WeatherModule } from './weather/weather.module';
 import { ConfigModule } from '@nestjs/config';
+import { HealthController } from './health/health.controller';
+import { WeatherModule } from './weather/weather.module';
 
 @Module({
   imports: [
-    WeatherModule,
     ConfigModule.forRoot({
-      envFilePath: '.env',
+      envFilePath: ['.env.local', '.env'],
       isGlobal: true,
     }),
+    WeatherModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [HealthController],
 })
 export class AppModule {}

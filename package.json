@@ -29,6 +29,7 @@
     "@nestjs/platform-fastify": "^11.1.29",
     "@nestjs/swagger": "^11.4.7",
     "axios": "^1.20.0",
+    "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "lunarphase-js": "^2.0.3",
     "nestjs-zod": "^5.5.0",
@@ -70,8 +71,11 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": "tsconfig.test.json" }]
     },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@nestjs/axios|@nestjs/config|axios)/)"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

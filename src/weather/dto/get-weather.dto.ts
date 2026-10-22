@@ -1,4 +1,12 @@
-import { IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class GetWeatherDto {
@@ -7,6 +15,7 @@ export class GetWeatherDto {
     example: 'Moscow',
   })
   @IsString()
+  @IsNotEmpty()
   q: string;
 
   @ApiPropertyOptional({
@@ -15,6 +24,7 @@ export class GetWeatherDto {
     maximum: 14,
     example: 7,
   })
+  @Type(() => Number)
   @IsNumber()
   @IsOptional()
   @Min(1)
