@@ -9,6 +9,7 @@ import {
   ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { GetWeatherDto } from './dto';
+import { WeatherResponseDto } from './dto/weather-response.dto';
 import { WeatherService } from './weather.service';
 
 @ApiTags('weather')
@@ -20,14 +21,15 @@ export class WeatherController {
   @ApiOperation({
     summary: 'Текущая погода или прогноз с фазой Луны',
     description:
-      'Без days возвращает текущую погоду, с days — прогноз на 1–14 дней. ' +
-      'Для прогноза фаза Луны считается отдельно на каждый день (forecast.forecastday[].lunarPhase).',
+      'mode=current — текущая погода, mode=forecast — прогноз на days дней (1–14, по умолчанию 1). ' +
+      'Без mode: при наличии days выбирается forecast, иначе current. ' +
+      'date (YYYY-MM-DD) задаёт дату для фазы Луны и допустим только для mode=current. ' +
+      'Ответ — нормализованная модель, а не сырой ответ WeatherAPI.',
   })
-  @ApiOkResponse({
-    description: 'Ответ WeatherAPI, дополненный полем lunarPhase',
-  })
+  @ApiOkResponse({ type: WeatherResponseDto })
   @ApiBadRequestResponse({
-    description: 'Некорректный q или days (допустимо 1–14)',
+    description:
+      'Некорректные q, mode, days или date либо недопустимое сочетание параметров',
   })
   @ApiTooManyRequestsResponse({ description: 'Исчерпана квота WeatherAPI' })
   @ApiBadGatewayResponse({

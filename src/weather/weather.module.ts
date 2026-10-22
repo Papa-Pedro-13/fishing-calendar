@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
-import { WeatherService } from './weather.service';
+import { WeatherCache } from './weather.cache';
 import { WeatherController } from './weather.controller';
+import { WeatherService } from './weather.service';
 import { HttpModule } from '@nestjs/axios';
 
 @Module({
@@ -12,6 +13,6 @@ import { HttpModule } from '@nestjs/axios';
     }),
   ],
   controllers: [WeatherController],
-  providers: [WeatherService],
+  providers: [WeatherService, WeatherCache],
 })
 export class WeatherModule {}
