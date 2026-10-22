@@ -1,148 +1,194 @@
 # 02. Архитектура (текущее состояние, as-is)
 
-> Документ описывает то, что реально есть в репозитории. Всё, что ниже, проверено
-> запуском: `npm ci && npm run build && node dist/main.js` — приложение поднимается,
-> маршрут `GET /api/weather` отвечает. Тесты при этом падают (см. раздел 8).
+> Документ описывает то, что реально есть в репозитории на 22.10.2026.
+> Проверено: `npm ci`, `npm run build`, `node dist/main.js`, `npm test` (27 тестов),
+> `npm run test:e2e` (18 тестов) и HTTP-запросы к локальному серверу.
 
 ## 1. Стек
 
 | Слой | Технология | Версия | Комментарий |
 |---|---|---|---|
-| Runtime | Node.js | 18+ (по факту 22) | TypeScript-сборка в CommonJS |
+| Runtime | Node.js | 20+ (проверено на 22) | TypeScript → CommonJS |
 | Фреймворк | NestJS | 11 | `@nestjs/common`, `@nestjs/core` |
 | HTTP-адаптер | Fastify | `@nestjs/platform-fastify` 11 | Не Express |
-| HTTP-клиент | `@nestjs/axios` + `axios` | 12 / 1.20 | Обёртка RxJS |
-| Конфигурация | `@nestjs/config` | 12 | Глобальный модуль, ждёт `.env` |
-| Валидация | `class-validator` + `class-transformer` (через Nest) | 0.15 | **Не подключена глобально** |
-| Документация API | `@nestjs/swagger` | 11 | Swagger UI на `/docs` |
+| HTTP-клиент | `@nestjs/axios` + `axios` | 12 / 1.20 | ESM-пакет, обёртка RxJS |
+| Конфигурация | `@nestjs/config` | 12 | Глобальный модуль, `.env.local` → `.env` |
+| Валидация | `class-validator` + `class-transformer` | 0.15 / 0.5 | Глобальный `ValidationPipe` |
+| Документация API | `@nestjs/swagger` | 11 | Swagger UI `/docs`, схема `/docs-json` |
 | Астрономия | `lunarphase-js` | 2.0 | Фаза и возраст Луны |
-| Тесты | Jest 30 + ts-jest, supertest | — | Конфигурация устарела/сломана |
-| Линт/формат | ESLint 9 (flat config), Prettier 3 | — | Prettier-плагин в ESLint закомментирован |
+| Тесты | Jest 30 + ts-jest + supertest | — | 27 unit + 18 e2e, зелёные |
+| Линт/формат | ESLint 9 (flat config), Prettier 3 | — | Плагин prettier в конфиге закомментирован, `npm run lint` падает |
 
-Зависимости, объявленные, но не используемые в коде: `nestjs-zod`, `@nestjs/mapped-types`,
-`@fastify/static`, `update`, `class-transformer` (транзитивно через Nest). Это наследие
-других заготовок и кандидаты на удаление.
+Особенность ESM: `@nestjs/axios`, `@nestjs/config` и `axios` поставляются как ES-модули.
+Node 22 подхватывает их при `require`, но Jest этого не умеет, поэтому тесты используют
+отдельный `tsconfig.test.json` (`module: commonjs`, `allowJs`) и
+`transformIgnorePatterns`, чтобы ts-jest транспилировал эти пакеты.
 
-В `package.json` осталось имя `english-tutor` — проект переименован не был.
+Имя пакета — `fishing-calendar`. Неиспользуемые зависимости (`nestjs-zod`,
+`@nestjs/mapped-types`, `@fastify/static`, `update`) и константы `ONE_DAY`/`TWO_WEEKS`
+удалены.
 
 ## 2. Структура репозитория
 
 ```
 .
 ├── src
-│   ├── main.ts                     # bootstrap: Fastify, Swagger, CORS, prefix /api, порт
-│   ├── app.module.ts               # корневой модуль: WeatherModule + ConfigModule
-│   ├── app.controller.ts           # пустой контроллер без маршрутов
-│   ├── app.service.ts              # пустой сервис
+│   ├── main.ts                       # bootstrap: Fastify, configureApp, порт, обработка падения
+│   ├── app.setup.ts                  # общая настройка: Swagger, CORS, /api, ValidationPipe, интерсептор
+│   ├── app.module.ts                 # корневой модуль: ConfigModule + WeatherModule + HealthController
 │   ├── common
-│   │   ├── index.ts                # реэкспорт
-│   │   └── constants/index.ts      # ONE_DAY, TWO_WEEKS (TWO_WEEKS не используется)
+│   │   └── interceptors
+│   │       └── logging.interceptor.ts # request-id, лог запроса, x-request-id в ответ
+│   ├── health
+│   │   └── health.controller.ts      # GET /api/health
 │   └── weather
-│       ├── weather.module.ts       # HttpModule.register(baseURL, timeout)
-│       ├── weather.controller.ts   # GET /api/weather
-│       ├── weather.service.ts      # вызов WeatherAPI + фаза Луны
+│       ├── weather.module.ts         # HttpModule.register(baseURL, timeout) + WeatherCache
+│       ├── weather.controller.ts     # GET /api/weather, Swagger-описание ответа и ошибок
+│       ├── weather.service.ts        # режим, кэш, вызов провайдера, маппинг ошибок
+│       ├── weather.cache.ts          # in-memory TTL-кэш со stale-окном
+│       ├── weather.constants.ts      # TTL и лимит записей
+│       ├── weather.mapper.ts         # WeatherAPI → нормализованная модель (чистые функции)
+│       ├── *.spec.ts                 # unit-тесты маппера, кэша и сервиса
+│       ├── providers
+│       │   └── weatherapi.types.ts   # сырые типы ответа WeatherAPI (внутренние)
 │       └── dto
 │           ├── index.ts
-│           └── get-weather.dto.ts  # GetWeatherDto + интерфейсы ответа WeatherAPI
+│           ├── get-weather.dto.ts    # q, mode, days, date + валидация
+│           └── weather-response.dto.ts # модель ответа с @ApiProperty
 ├── test
-│   ├── app.e2e-spec.ts             # устаревший e2e (GET / → "Hello World!")
+│   ├── app.e2e-spec.ts               # e2e: маршруты, валидация, кэш, мок HttpService
 │   └── jest-e2e.json
-├── docs/                           # эта документация
+├── docs/                             # эта документация
 ├── package.json / package-lock.json
-├── tsconfig.json / tsconfig.build.json
+├── tsconfig.json / tsconfig.build.json / tsconfig.test.json
 ├── nest-cli.json
 ├── eslint.config.mjs / .prettierrc
-└── README.md
+└── README.md / .env.example / .gitignore
 ```
 
-Слоёв (`domain/`, `infrastructure/`, `application/`) нет: структура — классическая
-Nest-«фича-модульная», где каждый модуль содержит контроллер, сервис и DTO.
+Слоёв `domain/`/`infrastructure/` нет: структура фича-модульная. Внутри погодного модуля
+уже выделены границы — сырые типы провайдера (`providers/`), чистый маппер
+(`weather.mapper.ts`), адаптер кэша (`weather.cache.ts`) и публичная модель
+(`dto/weather-response.dto.ts`).
 
 ## 3. Поток запроса
 
 ```mermaid
 sequenceDiagram
     participant C as Клиент
-    participant F as Fastify (/api)
+    participant I as Fastify + LoggingInterceptor
+    participant V as ValidationPipe
     participant WC as WeatherController
     participant WS as WeatherService
-    participant L as lunarphase-js
+    participant K as WeatherCache
+    participant M as weather.mapper
     participant W as api.weatherapi.com
 
-    C->>F: GET /api/weather?q=Moscow&days=3
-    F->>WC: query (строки, без валидации/трансформации)
-    WC->>WS: getWeather({ q, days })
-    WS->>WS: ConfigService.get('WEATHER_API_KEY')
-    alt ключ отсутствует
-        WS-->>C: 500 (обычный Error)
-    else ключ есть
-        WS->>L: lunarPhase(now + days*ONE_DAY)
-        L-->>WS: { phase, age }
-        WS->>W: GET /forecast.json?key&q&days (timeout 15s)
-        alt успех
-            W-->>WS: сырой JSON WeatherAPI
-            WS-->>C: 200 { ...provider, lunarPhase }
-        else ошибка/таймаут
-            WS-->>C: 502 "Произошла ошибка получения погоды"
+    C->>I: GET /api/weather?q=Moscow&mode=forecast&days=3
+    I->>V: transform + validate query
+    alt параметры невалидны
+        V-->>C: 400 (лишние/некорректные поля)
+    else валидно
+        V->>WC: GetWeatherDto (days — number)
+        WC->>WS: getWeather(dto)
+        WS->>WS: проверить ключ, выбрать режим, построить cacheKey
+        WS->>K: get(cacheKey)
+        alt свежий кэш
+            K-->>WS: WeatherResponseDto
+            WS-->>C: 200, stale=false
+        else промах
+            WS->>W: GET /forecast.json (timeout 15 с)
+            alt успех
+                W-->>WS: сырой JSON WeatherAPI
+                WS->>M: mapWeather(data, includeForecast, phaseDate)
+                M-->>WS: нормализованная модель
+                WS->>K: set(TTL 30 мин)
+                WS-->>C: 200, stale=false
+            else ошибка или таймаут
+                alt есть устаревшая запись (< 6 ч)
+                    WS-->>C: 200, stale=true
+                else
+                    WS-->>C: 400 / 429 / 502
+                end
+            end
         end
     end
 ```
 
-Особенности, важные для интеграции:
+Ключевые отличия от прежней версии:
 
-- **Ответ — это «сырой» JSON WeatherAPI** плюс поле `lunarPhase`. Внутренней модели нет:
-  интерфейсы `GetWeatherResponse`, `Current`, `Forecast`, `Forecastday`, `Day`, `Astro`,
-  `Location` описаны в DTO, но нигде не используются для маппинга.
-- **Фаза Луны считается на дату `now + days`**, то есть при `days=3` — на третий день
-  прогноза (проверено: `lunarPhase.age` сдвигается ровно на 3 суток). Для календаря нужна
-  фаза **на каждый день**, а не одна на весь ответ.
-- `days` — единственный переключатель: есть значение → `/forecast.json`, нет → `/current.json`.
-- Провайдер вызывается **на каждый запрос**, без кэша и дедупликации.
+- **Публичный контракт — нормализованная модель**, а не сырой JSON провайдера.
+  Маппер переименовывает поля (`temp_c` → `temperatureC`, `wind_kph` → `windKph`),
+  приводит `is_day` к boolean, собирает `condition { text, code }`, отбрасывает
+  неиспользуемые поля провайдера (`hour[]`, иконки, `moon_*`).
+- **Фаза Луны считается на каждый день прогноза** (`forecast[].lunarPhase`, полдень UTC).
+  Верхнеуровневый `lunarPhase` — на сегодня или на переданный `date`.
+- **Параметры разделены**: `mode` выбирает эндпоинт провайдера, `days` — горизонт прогноза,
+  `date` — дату фазы Луны. `days` без `mode` по-прежнему означает прогноз (совместимость).
+- **Провайдер вызывается только на промахе кэша**; ошибки не кэшируются.
 
 ## 4. Конфигурация
 
-`ConfigModule.forRoot({ envFilePath: '.env', isGlobal: true })`.
+`ConfigModule.forRoot({ envFilePath: ['.env.local', '.env'], isGlobal: true })`.
+Приоритет: переменные процесса → `.env.local` → `.env`; первый существующий файл в массиве
+перекрывает последующий.
 
 | Переменная | Обязательна | Назначение | Значение по умолчанию |
 |---|---|---|---|
 | `PORT` | нет | Порт HTTP-сервера | `4200` |
 | `WEATHER_API_KEY` | да | Ключ WeatherAPI.com | — |
 
-**Проблема окружения.** В рабочей копии присутствует только `.env.local` (он в
-`.gitignore` и управляется Freebuff), а `ConfigModule` читает `.env`. В результате:
-
-- при запуске через `npm run start` без предварительного `export` ключа сервис вернёт
-  `500` на `/api/weather`;
-- при запуске `node dist/main.js` с переменными, экспортированными в оболочку, всё
-  работает — так и была проверена текущая версия.
-
-Рекомендуемое минимальное исправление: `envFilePath: ['.env.local', '.env']` либо
-перейти на `.env` и завести `.env.example` (см. [04](04-implementation-status.md)).
+- `.env.example` содержит обе переменные и коммитится; `.env` и `.env.local` — в `.gitignore`.
+- `PORT` приводится к числу (`Number(process.env.PORT) || 4200`): строковое значение из env
+  иначе трактуется Fastify как некорректный порт и сервер слушает случайный.
+- Без `WEATHER_API_KEY` приложение стартует, но `GET /api/weather` отвечает `503`
+  с явным сообщением — осознанный выбор вместо падения на старте.
 
 ## 5. Точка входа и middleware
 
-`src/main.ts`:
+`src/main.ts` создаёт приложение на Fastify и вызывает `configureApp(app)` из
+`src/app.setup.ts` — та же настройка используется в e2e-тестах, поэтому тесты проверяют
+реальную конфигурацию, а не упрощённую.
 
 ```ts
-const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
-app.enableCors();                     // разрешены все origin
-app.setGlobalPrefix('api');           // все контроллеры под /api
-await app.listen(process.env.PORT ?? 4200);
+export function configureApp<T extends INestApplication>(app: T): T {
+  SwaggerModule.setup('docs', app, () => SwaggerModule.createDocument(app, config));
+  app.enableCors();                 // по-прежнему все origin
+  app.setGlobalPrefix('api');       // все контроллеры под /api
+  app.useGlobalPipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+  }));
+  app.useGlobalInterceptors(new LoggingInterceptor());
+  return app;
+}
 ```
 
-- Swagger: `SwaggerModule.setup('docs', app, ...)` → доступен на `/docs`
-  (глобальный префикс на него не распространяется), title «Fishing Calendar», версия 1.0.
-- **Не подключены**: `ValidationPipe`, глобальные фильтры исключений, интерсепторы
-  логирования/таймингов, `helmet`, rate limiting, версионирование API.
-- Ошибки bootstrap не логируются и не обрабатываются (`bootstrap()` без `catch`).
+- Swagger: UI на `/docs`, JSON-схема на `/docs-json`, глобальный префикс на них не действует.
+- `ValidationPipe` трансформирует query в типы DTO (`days` → number) и отклоняет
+  неизвестные параметры.
+- `LoggingInterceptor` генерирует `x-request-id` (или использует присланный), возвращает
+  его в ответе, логирует метод, путь, код и длительность; 4xx — `warn`, 5xx — `error`.
+- Порт: `Number(process.env.PORT) || 4200`. Ошибка старта логируется, процесс завершается
+  с кодом 1.
+- **Не подключены**: глобальные фильтры исключений, `helmet`, rate limiting,
+  версионирование API.
 
 ## 6. Модули
 
 ### `AppModule`
-Импортирует `WeatherModule` и `ConfigModule` (глобально). `AppController`/`AppService`
-пустые: маршрутов нет, `GET /api` отвечает `404` (проверено).
+
+`ConfigModule` (глобально), `WeatherModule`, `HealthController`. Пустые
+`AppController`/`AppService` удалены — `GET /api` отвечает `404`, `GET /api/health` — `200`.
+
+### `HealthController`
+
+`GET /api/health` → `{ status: 'ok', uptime, timestamp }`. Внешние зависимости не опрашивает,
+поэтому подходит для liveness, но не для readiness.
 
 ### `WeatherModule`
+
 ```ts
 HttpModule.register({
   timeout: 15000,
@@ -150,58 +196,86 @@ HttpModule.register({
   baseURL: 'https://api.weatherapi.com/v1',
 })
 ```
-Регистрация «на модуль», а не глобально: при появлении других интеграций конфигурацию
-лучше вынести в общий `HttpModule` или отдельный клиент WeatherAPI.
+
+Провайдеры: `WeatherService`, `WeatherCache`. Конфигурация HTTP-клиента локальна для модуля;
+при появлении других интеграций её стоит вынести в общий клиент WeatherAPI за интерфейсом
+`WeatherProvider` (см. [07](07-target-architecture.md), ADR A8).
 
 ### `WeatherService`
-- `getWeather(dto)` — выбор эндпоинта, проверка ключа, вызов, добавление `lunarPhase`.
-- `getLunarPhase(date?)` — `{ phase, age }` из `lunarphase-js`; `age` — возраст Луны в днях
-  (`null`, если дата некорректна — например, при `days=abc`).
-- Ключ передаётся в query провайдера, поэтому **обязателен HTTPS** и запрет логирования
-  исходящих URL (иначе ключ попадёт в логи).
 
-## 7. Сборка и запуск (проверено)
+- Проверяет `WEATHER_API_KEY` через `ConfigService` → `503` при отсутствии.
+- `resolveRequest` выбирает режим (`mode` или наличие `days`), отклоняет `days` при
+  `mode=current` и `date` при `mode=forecast`, тримит `q` (пустой → 400), строит ключ кэша
+  `wx:{mode}:{q}:{days|-}:{date|-}` и TTL.
+- Кэш-хит → ответ без провайдера. Промах → `HttpService.get` через `firstValueFrom`,
+  маппинг, запись в кэш.
+- Сбой → лог причины (статус, код и сообщение WeatherAPI), затем устаревший кэш с
+  `stale: true` либо ошибка: 400 (некорректный запрос/место), 429 (квота),
+  502 (401/403, 5xx, сеть, таймаут).
+- Ключ передаётся в query провайдера: HTTPS обязателен, исходящие URL целиком не логируются.
+
+### `WeatherCache`
+
+In-memory `Map` с TTL: 10 минут для текущей погоды, 30 минут для прогноза, stale-окно 6 часов,
+лимит 500 записей с вытеснением самой старой. Методы `get`, `getStale`, `set`, `clear`.
+Кэш не разделяется между инстансами и не переживает рестарт; фонового обновления
+(stale-while-revalidate) нет.
+
+### `weather.mapper.ts`
+
+Чистые функции `mapWeather`, `mapLocation`, `mapCurrent`, `mapForecastDay`, `lunarPhaseFor`.
+Не зависят от Nest и HTTP — тестируются на фикстурах реального формата WeatherAPI.
+
+## 7. Сборка и запуск
 
 ```bash
 npm ci                 # установка по lockfile
 npm run build          # nest build → dist/ (tsc, CommonJS)
 node dist/main.js      # прод-запуск, порт из PORT или 4200
 npm run start:dev      # watch-режим
+npm test               # unit: mapper, cache, service
+npm run test:e2e       # e2e: маршруты, валидация, кэш
 ```
 
 Проверка работоспособности:
 
 ```bash
+curl "http://127.0.0.1:4200/api/health"
 curl "http://127.0.0.1:4200/api/weather?q=Moscow"
-curl "http://127.0.0.1:4200/api/weather?q=Moscow&days=3"
+curl "http://127.0.0.1:4200/api/weather?q=Moscow&mode=forecast&days=3"
 ```
 
 `tsconfig.json`: `module`/`moduleResolution` = `nodenext`, `target` ES2023,
 `strictNullChecks: true`, но `noImplicitAny: false` и `strictBindCallApply: false` —
-строгость ниже, чем у нового Nest-проекта. Абсолютный импорт `src/common` компилируется
-корректно в относительный `../common`, так что прод-сборка рабочая.
+строгость ниже, чем у нового Nest-проекта (остаётся в техдолге).
+`tsconfig.test.json` переопределяет модуль на CommonJS и включает `allowJs` только для
+Jest, прод-сборка его не использует.
 
-## 8. Тесты (фактически красные)
+## 8. Тесты
 
 | Команда | Результат |
 |---|---|
-| `npm test` | `No tests found, exiting with code 1` — unit-тестов нет |
-| `npm run test:e2e` | Падение на импорте `@nestjs/axios`: `SyntaxError: Unexpected token 'export'` — ts-jest не настроен на ESM-пакеты |
+| `npm test` | 3 suites, 27 тестов — маппер, TTL-кэш, сервис (кэш-хиты, stale, `mode`/`days`/`date`, 400/429/502/503) |
+| `npm run test:e2e` | 1 suite, 18 тестов — `/api/health`, валидация всех сочетаний параметров, нормализованный ответ, Луна по дням, обратная совместимость `days`, повторный запрос из кэша |
 
-Дополнительно сам e2e-тест устарел: он ждёт `GET /` → `"Hello World!"`, тогда как
-маршрута нет и включён префикс `api`. То есть тестовая инфраструктура не просто не
-покрывает код — она не запускается. Это блокер для CI и для регрессионной защиты при
-дальнейшем развитии.
+E2E поднимает приложение через `configureApp` с `FastifyAdapter` и подменяет `HttpService`
+моком, поэтому не ходит в сеть и не расходует квоту провайдера.
+
+Что не покрыто: реальный провайдер (контрактные тесты), конкурентные запросы и дедупликация,
+поведение кэша при нескольких инстансах.
 
 ## 9. Что архитектурно отсутствует
 
 - Слой хранения: БД, миграции, репозитории.
 - Доменные модули: `fish`, `water-bodies`, `reports`, `recommendations`, `rules`.
-- Кэш (погода идеально кэшируется по `q + дата`).
+- Провайдер-интерфейс и второй источник погоды (Open-Meteo) с фолбэком.
+- Фоновое обновление кэша (stale-while-revalidate), дедупликация одновременных запросов.
 - Планировщик (`@nestjs/schedule`) для предрасчёта календаря и обновления прогнозов.
 - Аутентификация/авторизация, пользователи, роли, модерация.
-- Наблюдаемость: структурные логи, request-id, health-check (`/api/health`), метрики.
+- Наблюдаемость: метрики, трассировка, readiness-проверка зависимостей (health есть).
+- Rate limit, ретраи с backoff, версионирование API (`/api/v1`).
 - Контейнеризация, CI, конфигурация окружений (dev/stage/prod).
 
 Целевая архитектура и порядок её внедрения — в [07-target-architecture.md](07-target-architecture.md)
-и [08-roadmap.md](08-roadmap.md).
+и [08-roadmap.md](08-roadmap.md). Детали контракта — в [03-api-reference.md](03-api-reference.md),
+статус и техдолг — в [04-implementation-status.md](04-implementation-status.md).
