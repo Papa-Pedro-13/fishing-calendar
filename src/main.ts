@@ -1,10 +1,11 @@
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
 import {
-  NestFastifyApplication,
   FastifyAdapter,
+  NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+import { configureApp } from './app.setup';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -12,15 +13,16 @@ async function bootstrap() {
     new FastifyAdapter()
   );
 
-  const config = new DocumentBuilder()
-    .setTitle('Fishing Calendar')
-    .setVersion('1.0')
-    .build();
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, documentFactory);
+  configureApp(app);
 
-  app.enableCors();
-  app.setGlobalPrefix('api');
-  await app.listen(process.env.PORT ?? 4200);
+  const port = Number(process.env.PORT) || 4200;
+  await app.listen(port);
 }
-bootstrap();
+
+bootstrap().catch((error: unknown) => {
+  new Logger('Bootstrap').error(
+    'Не удалось запустить приложение',
+    error instanceof Error ? error.stack : String(error)
+  );
+  process.exit(1);
+});
